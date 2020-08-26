@@ -504,14 +504,14 @@ func (r *Redshift) UpdateLatencyInfo(tx *sql.Tx, table Table) error {
 		`INSERT INTO latencies (name) (
 				SELECT '%s' AS name
 			EXCEPT
-				SELECT name FROM latencies
-		)`, dest))
+				SELECT name FROM latencies WHERE name = '%s'
+		)`, dest, dest))
 
 	// Get the last latency value out of the table, for logging.
-	// Having this in the transaction seems to help, though it's not clear why.
+	// This can also be outside of the transaction
 	latencyQuery := fmt.Sprintf("SELECT last_update FROM latencies WHERE name = '%s'", dest)
 	var t pq.NullTime
-	err = tx.QueryRowContext(r.ctx, latencyQuery).Scan(&t)
+	err = r.QueryRowContext(r.ctx, latencyQuery).Scan(&t)
 	// this will either return a value or null if no data, rather than no rows, because we inserted earleir
 	if err != nil {
 		return fmt.Errorf("error scanning latency table for %s: %s", dest, err)
@@ -520,10 +520,10 @@ func (r *Redshift) UpdateLatencyInfo(tx *sql.Tx, table Table) error {
 	// Update the latency table with the current timestamp, for the last run.
 	// This one definitely needs to be inside the transaction!
 	_, err = tx.ExecContext(r.ctx, fmt.Sprintf(
-		"UPDATE latencies SET last_update = current_timestamp WHERE name = '%s'",
+		"UPDATE latencies SET last_update = (select current_timestamp) WHERE name = '%s'",
 		dest))
 	if err != nil {
-		return err
+		return fmt.Errorf("error saving new latency to table for %s: %s", dest, err)
 	}
 
 	logger.GetLogger().InfoD("analytics-run-latency", kvlogger.M{
